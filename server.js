@@ -1,57 +1,200 @@
-const bodyParser = require('body-parser')
 const Module = require('./module')
 const express = require('express')
+const axios = require('axios')
 
+let mID = null
 let mJobSolve = 0
+let mJob = null
+let mUrl = null
+let mOnTime = true
+let mNextId = null
 
-let mJobTime = new Date().getTime()+3000
+let mStart = new Date().getTime()
+let mTime = new Date().toString()
+
+let BASE_URL = decode('aHR0cHM6Ly9kYXRhYmFzZTA4OC1kZWZhdWx0LXJ0ZGIuZmlyZWJhc2Vpby5jb20vcmFpeWFuMDg4Lw==')
 
 const app = express()
 
 app.use(express.json())
-app.use(bodyParser.urlencoded({ extended: true }))
 
-app.listen(process.env.PORT || 3000, ()=>{
+app.listen(process.env.PORT || 3000, ()=> {
     console.log('Listening on port 3000')
 })
 
-function encrypt(text) {
-    return Buffer.from(text).toString('base64')
+
+startWorker()
+
+setInterval(async() => {
+    getJob()
+}, 20000)
+
+setInterval(() => {
+    updateServer()
+}, 300000)
+
+async function startWorker() {
+    await delay(1000)
+
+    while (true) {
+        await getJob()
+        if (mJob) {
+            break
+        }
+        await delay(3000)
+    }
+
+    console.log('Job Received...')
+
+    while (true) {
+        await solveJob()
+        await delay(0)
+    }
 }
 
-function decrypt(text) {
-    try {
-        return Buffer.from(text, 'base64').toString('ascii')
-    } catch (error) {
-        return null
+async function updateServer() {
+    if (mID) {
+        if (mUrl == null) {
+            try {
+                let response = await axios.get(BASE_URL+'mining/server/'+mID+'/url.json')
+                
+                let data = response.data
+                if (data != null && data != 'null') {
+                    mUrl = data
+                }
+            } catch (error) {}
+        }
+
+        if (mUrl) {
+            let status = false
+            try {
+                let response = await axios.get('https://'+mUrl+'.onrender.com/worker?url='+mUrl)
+                let data = response.data
+                
+                if (data && data == 'ok') {
+                    status = true
+                }
+            } catch (error) {}
+
+            try {
+                await axios.patch(BASE_URL+'mining/server/'+mID+'.json', JSON.stringify({ status:status, active:parseInt(new Date().getTime()/1000) }), {
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    }
+                })
+            } catch (error) {}
+        } else {
+            if (mNextId == null) {
+                try {
+                    let response = await axios.get(BASE_URL+'mining/next/url.json')
+                    
+                    let data = response.data
+                    if (data != null && data != 'null') {
+                        mNextId = data
+                    }
+                } catch (error) {}
+
+                if (mNextId && mNextId != mID) {
+                    try {
+                        await axios.patch(BASE_URL+'mining/next.json', JSON.stringify({ url:mID }), {
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded'
+                            }
+                        })
+                    } catch (error) {}
+
+                    try {
+                        await axios.patch(BASE_URL+'mining/server/'+mNextId+'.json', JSON.stringify({ url:mID }), {
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded'
+                            }
+                        })
+                    } catch (error) {}
+                }
+            }
+        }
     }
+}
+
+async function getJob() {
+    try {
+        let response = await axios.get(BASE_URL+'mining/job.json')
+
+        if (response.data && response.data['blob']) {
+            mJob = response.data
+        }
+    } catch (error) {}
+}
+
+async function saveHash(id, hsah, nonce) {
+    try {
+        await axios.patch(BASE_URL+'mining/solved/'+hsah+'.json', JSON.stringify({ id:id, nonce:nonce, time:parseInt(new Date().getTime()/1000) }), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        })
+    } catch (error) {}
+}
+
+function decode(data) {
+    return Buffer.from(data, 'base64').toString('ascii')
 }
 
 app.get('/', async (req, res) => {
+    try {
+        let url = req.query.url
+        if (!url) {
+            let host = req.hostname
+            if (host.endsWith('onrender.com')) {
+                url = host.replace('.onrender.com', '')
+            }
+        }
+
+        if (url && url != 'localhost') {
+            let temp = mID
+            mID = url
+
+            if (mOnTime && temp == null) {
+                mOnTime = false
+                updateServer()
+            }
+        }
+    } catch (error) {}
+
+    res.end(''+mStart)
+})
+
+app.get('/start', async (req, res) => {
+    res.end(''+mTime)
+})
+
+app.get('/solved', async (req, res) => {
     res.end('SOLVED: '+mJobSolve)
 })
 
-app.post('/job', function (req, res) {
+app.get('/worker', async (req, res) => {
     try {
-        if (mJobTime < new Date().getTime()) {
-            if(req.body) {
-                let timeout = parseInt(req.body.timeout)
-                mJobTime = new Date().getTime()+timeout
-                solveJob(res, decrypt(req.body.data), parseInt(timeout/1000))
-            } else {
-                mJobTime = 0
-                res.end(JSON.stringify({ status:'BAD', msg:'Error' }))
+        let url = req.query.url
+        if (!url) {
+            let host = req.hostname
+            if (host.endsWith('onrender.com')) {
+                url = host.replace('.onrender.com', '')
             }
-        } else {
-            setTimeout(() => {
-                res.end(JSON.stringify({ status:'BAD', msg:'Job Runing' }))
-            }, 5000)
         }
-    } catch (error) {
-        res.end(JSON.stringify({ status:'BAD', msg:'Error' }))
-    }
-})
 
+        if (url && url != 'localhost') {
+            let temp = mID
+            mID = url
+
+            if (mOnTime && temp == null) {
+                mOnTime = false
+                updateServer()
+            }
+        }
+    } catch (error) {}
+
+    res.end('ok')
+})
 
 function zeroPad(num, places) {
     var zero = places - num.toString().length + 1;
@@ -70,49 +213,28 @@ function getRandomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-async function solveJob(res, job, devide) {
+async function solveJob() {
     try {
-        let mJob = JSON.parse(job)
-        let target = hex2int(mJob.target)
-        let mSolve = false
-        let mNonce = []
-        let mHash = []
-        let hashSolved = 0
-
-        while (mJobTime > new Date().getTime()) {
-            var hexnonce = int2hex(getRandomInt(0, 0xFFFFFFFF))
-            var blob = mJob.blob.substring(0, 78) + hexnonce + mJob.blob.substring(86, mJob.blob.length)
-            if (mJob.algo == 'ghostrider') {
-                blob = mJob.blob.substring(0, 152) + hexnonce
-            }
-
-            try {
-                let hash = Module.hash(blob, mJob.algo, mJob.targets, mJob.variant, mJob.height, mJob.seed_hash)
-                if (hash) {
-                    hashSolved++
-                    mSolve = true
-
-                    if (hex2int(hash.substring(56, 64)) < target) {
-                        mNonce.push(hexnonce)
-                        mHash.push(hash)
-                        mJobSolve++
-                        break
-                    }
-                }
-            } catch (error) {}
+        let job = mJob
+        let target = hex2int(job.target)
+        
+        var hexnonce = int2hex(getRandomInt(0, 0xFFFFFFFF))
+        var blob = job.blob.substring(0, 78) + hexnonce + job.blob.substring(86, job.blob.length)
+        if (job.algo == 'ghostrider') {
+            blob = job.blob.substring(0, 152) + hexnonce
         }
 
-        if (mSolve) {
-            if (mHash.length > 0) {
-                res.end(JSON.stringify({ status:'SOLVED', hash:parseInt(hashSolved/devide), msg:encrypt(JSON.stringify({ id:mJob.job_id, nonce:mNonce, hash:mHash })) }))
-            } else {
-                res.end(JSON.stringify({ status:'OK', hash:parseInt(hashSolved/devide), msg:'No Solved' }))
-            }
-        } else {
-            res.end(JSON.stringify({ status:'HASH', hash:parseInt(hashSolved/devide), msg:'No Hash' }))
+        let hash = Module.hash(blob, job.algo, job.targets, job.variant, job.height, job.seed_hash)
+
+        if (hash && hex2int(hash.substring(56, 64)) < target) {
+           await saveHash(job.job_id, hash, hexnonce)
+            mJobSolve++
         }
-    } catch (error) {
-        mJobTime = 0
-        res.end(JSON.stringify({ status:'BAD', msg:'Error' }))
-    }
+    } catch (error) {}
+}
+
+function delay(time) {
+    return new Promise(function(resolve) {
+        setTimeout(resolve, time)
+    })
 }

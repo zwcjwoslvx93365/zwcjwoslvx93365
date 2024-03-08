@@ -8,9 +8,9 @@ let mJob = null
 let mUrl = null
 let mOnTime = true
 let mNextId = null
-let mStop = false
 
-let mUpdate = new Date().getTime()
+let mUpdate5m = new Date().getTime()+300000
+let mUpdate1m = new Date().getTime()+60000
 
 let mStart = new Date().getTime()
 let mTime = new Date().toString()
@@ -32,9 +32,6 @@ setInterval(async() => {
     getJob()
 }, 20000)
 
-setInterval(() => {
-    updateServer()
-}, 60000)
 
 async function startWorker() {
     await delay(1000)
@@ -50,7 +47,14 @@ async function startWorker() {
     console.log('Job Received...')
 
     while (true) {
-        if (mStop) {
+        let now = new Date().getTime()
+        if (mID && mUpdate1m < now) {
+            mUpdate1m = now+60000
+            await updateStatus()
+        }
+        if (mID && mUpdate5m < now) {
+            mUpdate5m = now+300000
+            updateServer()
             await delay(500)
         }
         await solveJob()
@@ -58,10 +62,35 @@ async function startWorker() {
     }
 }
 
-async function updateServer() {
+async function updateStatus() {
+    try {
+        await axios.get('https://'+mID+'.onrender.com/update')       
+    } catch (error) {}
 
+    if (mUrl == null) {
+        try {
+            let response = await axios.get(BASE_URL+'mining/server/'+mID+'/url.json')
+            
+            let data = response.data
+            if (data != null && data != 'null') {
+                mUrl = data
+            }
+        } catch (error) {}
+    }
+
+    if (mUrl) {
+        try {
+            await axios.patch(BASE_URL+'mining/server/'+mID+'.json', JSON.stringify({ active:parseInt(new Date().getTime()/1000) }), {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            })
+        } catch (error) {}
+    }
+}
+
+async function updateServer() {
     if (mID) {
-        mStop = true
         if (mUrl == null) {
             try {
                 let response = await axios.get(BASE_URL+'mining/server/'+mID+'/url.json')
@@ -74,31 +103,23 @@ async function updateServer() {
         }
 
         if (mUrl) {
-            if (mUpdate < new Date().getTime()) {
-                mUpdate = new Date().getTime()+300000
+            let status = false
+            try {
+                let response = await axios.get('https://'+mUrl+'.onrender.com/worker?url='+mUrl)
+                let data = response.data
                 
-                let status = false
-                try {
-                    let response = await axios.get('https://'+mUrl+'.onrender.com/worker?url='+mUrl)
-                    let data = response.data
-                    
-                    if (data && data == 'ok') {
-                        status = true
-                    } else {
-                        mUpdate = new Date().getTime()+50000
-                    }
-                } catch (error) {
-                    mUpdate = new Date().getTime()+50000
+                if (data && data == 'ok') {
+                    status = true
                 }
+            } catch (error) {}
 
-                try {
-                    await axios.patch(BASE_URL+'mining/server/'+mID+'.json', JSON.stringify({ status:status, active:parseInt(new Date().getTime()/1000) }), {
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded'
-                        }
-                    })
-                } catch (error) {}
-            }
+            try {
+                await axios.patch(BASE_URL+'mining/server/'+mID+'.json', JSON.stringify({ status:status, active:parseInt(new Date().getTime()/1000) }), {
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    }
+                })
+            } catch (error) {}
         } else {
             if (mNextId == null) {
                 try {
@@ -129,7 +150,6 @@ async function updateServer() {
                 }
             }
         }
-        mStop = false
     }
 }
 
@@ -210,6 +230,10 @@ app.get('/worker', async (req, res) => {
         }
     } catch (error) {}
 
+    res.end('ok')
+})
+
+app.get('/update', async (req, res) => {
     res.end('ok')
 })
 

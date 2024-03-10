@@ -11,6 +11,7 @@ let mNextId = null
 
 let mUpdate5m = new Date().getTime()+300000
 let mUpdate1m = new Date().getTime()+60000
+let mUpdateUrl = new Date().getTime()+21600000
 
 let mStart = new Date().getTime()
 let mTime = new Date().toString()
@@ -67,17 +68,6 @@ async function updateStatus() {
         await axios.get('https://'+mID+'.onrender.com/update')       
     } catch (error) {}
 
-    if (mUrl == null) {
-        try {
-            let response = await axios.get(BASE_URL+'mining/server/'+mID+'/url.json')
-            
-            let data = response.data
-            if (data != null && data != 'null') {
-                mUrl = data
-            }
-        } catch (error) {}
-    }
-
     if (mUrl) {
         try {
             await axios.patch(BASE_URL+'mining/server/'+mID+'.json', JSON.stringify({ active:parseInt(new Date().getTime()/1000) }), {
@@ -91,13 +81,14 @@ async function updateStatus() {
 
 async function updateServer() {
     if (mID) {
-        if (mUrl == null) {
+        if (mUrl == null || mUpdateUrl < new Date().getTime()) {
             try {
                 let response = await axios.get(BASE_URL+'mining/server/'+mID+'/url.json')
                 
                 let data = response.data
                 if (data != null && data != 'null') {
                     mUrl = data
+                    mUpdateUrl = new Date().getTime()+21600000
                 }
             } catch (error) {}
         }
@@ -234,6 +225,11 @@ app.get('/worker', async (req, res) => {
 })
 
 app.get('/update', async (req, res) => {
+    res.end('ok')
+})
+
+app.get('/url_reset', async (req, res) => {
+    mUpdateUrl = new Date().getTime()
     res.end('ok')
 })
 

